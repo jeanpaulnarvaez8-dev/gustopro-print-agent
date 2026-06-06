@@ -1,0 +1,10 @@
+{
+  "name": "gustopro-print-agent",
+  "version": "1.0.0",
+  "description": "Ponte di stampa locale: gestione.gustopro.it -> termica ESC/POS .24 (POS80D)",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js"
+  },
+  "license": "MIT"
+}
