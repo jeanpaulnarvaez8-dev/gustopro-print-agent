@@ -135,6 +135,34 @@ async function sendToPrinter(buf, retries = 4) {
   throw lastErr;
 }
 
+// JP 2026-06-07: invia a IP/porta arbitrari (per routing preconto asporto
+// → BAR .21). Stessa logica di sendToPrinter ma parametrica.
+function connectOnceTo(buf, ip, port) {
+  return new Promise((resolve, reject) => {
+    const sock = net.createConnection(port, ip);
+    let settled = false, connected = false;
+    const done = (err) => { if (settled) return; settled = true; err ? reject(Object.assign(err, { connected })) : resolve(); };
+    sock.setTimeout(5000);
+    sock.on('connect', () => { connected = true; sock.write(buf, () => sock.end()); });
+    sock.on('error', done);
+    sock.on('timeout', () => { sock.destroy(); done(new Error('timeout')); });
+    sock.on('close', (hadErr) => done(hadErr ? new Error('connessione chiusa con errore') : null));
+  });
+}
+async function sendToCustomPrinter(buf, ip, port, retries = 4) {
+  let lastErr;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try { return await connectOnceTo(buf, ip, port); }
+    catch (e) {
+      lastErr = e;
+      console.error(`[print ${ip}:${port}] tentativo ${attempt}/${retries}: ${e.message}`);
+      if (e.connected) break;
+      if (attempt < retries) await new Promise(r => setTimeout(r, 300 * attempt));
+    }
+  }
+  throw lastErr;
+}
+
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', ALLOW_ORIGIN);
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
@@ -268,11 +296,19 @@ async function pollOnce() {
       } else {
         continue;
       }
-      console.log(`[poll] job ${job.kind} order=${job.order_id}`);
+      // JP 2026-06-07: routing destinazione. Se il backend ha settato
+      // job.target='bar' (per asporti), invia alla stampante BAR .21.
+      // Altrimenti default → sala .24.
+      const target = job.target === 'bar' ? { ip: BAR_IP, port: BAR_PORT, label: 'BAR' } : null;
+      console.log(`[poll] job ${job.kind} order=${job.order_id}${target ? ` → ${target.label}` : ''}`);
       try {
         const escpos = await httpsGet(url);
         if (escpos.status !== 200) { console.error(`  ✗ escpos status ${escpos.status}`); continue; }
-        await sendToPrinter(escpos.body);
+        if (target) {
+          await sendToCustomPrinter(escpos.body, target.ip, target.port);
+        } else {
+          await sendToPrinter(escpos.body);
+        }
         console.log(`  ✓ stampato (${escpos.body.length} byte)`);
       } catch (e) {
         console.error(`  ✗ ${e.message}`);
