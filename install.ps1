@@ -34,22 +34,40 @@ function Write-Warn($msg) {
     Write-Host "    !! $msg" -ForegroundColor Yellow
 }
 
+# ── Helper: pausa prima di chiudere (cosi' l'utente legge l'errore) ──
+function Stop-WithPause($code) {
+    Write-Host ""
+    Write-Host "Premi INVIO per chiudere..." -ForegroundColor Cyan
+    Read-Host | Out-Null
+    exit $code
+}
+
 # ── Step 0: amministratore? ──────────────────────────────────────────
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Write-Host "ERRORE: devi eseguire questo script come AMMINISTRATORE." -ForegroundColor Red
-    Write-Host "Tasto destro su PowerShell -> 'Esegui come amministratore', poi riprova." -ForegroundColor Yellow
-    exit 1
+    Write-Host ""
+    Write-Host "==========================================================" -ForegroundColor Red
+    Write-Host "ERRORE: PowerShell NON e' aperto come AMMINISTRATORE" -ForegroundColor Red
+    Write-Host "==========================================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Cosa fare:" -ForegroundColor Yellow
+    Write-Host "  1. Chiudi questa finestra" -ForegroundColor Yellow
+    Write-Host "  2. Premi tasto Windows, scrivi 'powershell'" -ForegroundColor Yellow
+    Write-Host "  3. TASTO DESTRO su 'Windows PowerShell'" -ForegroundColor Yellow
+    Write-Host "  4. Clicca 'Esegui come amministratore'" -ForegroundColor Yellow
+    Write-Host "  5. Riprova il comando" -ForegroundColor Yellow
+    Stop-WithPause 1
 }
 
 # ── Step 1: PRINT_AGENT_TOKEN obbligatorio ──────────────────────────
 if (-not $env:PRINT_AGENT_TOKEN) {
+    Write-Host ""
     Write-Host "ERRORE: variabile PRINT_AGENT_TOKEN non impostata." -ForegroundColor Red
     Write-Host ""
     Write-Host 'Prima di lanciare lo script, esegui:' -ForegroundColor Yellow
     Write-Host '  $env:PRINT_AGENT_TOKEN = "il_token_segreto"' -ForegroundColor Yellow
     Write-Host "poi rilancia l'installer." -ForegroundColor Yellow
-    exit 1
+    Stop-WithPause 1
 }
 $TOKEN = $env:PRINT_AGENT_TOKEN
 
