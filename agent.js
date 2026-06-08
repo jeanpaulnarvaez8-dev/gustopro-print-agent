@@ -60,6 +60,12 @@ const KITCHEN_PORT  = parseInt(process.env.KITCHEN_PRINTER_PORT || '9100', 10);
 const BAR_IP        = process.env.BAR_PRINTER_IP       || '192.168.1.21';
 const BAR_PORT      = parseInt(process.env.BAR_PRINTER_PORT || '9100', 10);
 
+// JP 2026-06-08: stampante PASS (Epson TM-m30II al pass cucina). I piatti
+// pronti vengono stampati 1 per foglio col TAV + nome piatto: il cameriere
+// li prende dal gancio + abbina al piatto fisico.
+const PASS_IP       = process.env.PASS_PRINTER_IP      || '192.168.1.102';
+const PASS_PORT     = parseInt(process.env.PASS_PRINTER_PORT || '9100', 10);
+
 const ESC = 0x1B, GS = 0x1D;
 const WIDTH = 32; // colonne stampabili (sicuro sia a 58 sia a 80mm)
 
@@ -271,6 +277,22 @@ async function pollOnce() {
         }
         continue;
       }
+      // JP 2026-06-08: ticket PASS — un foglio per piatto ready.
+      // Payload: { table_number, name, quantity }. Stampante .102.
+      if (job.kind === 'pass-ticket') {
+        const p = job.payload || {};
+        const tav = String(p.table_number || '?');
+        const qty = Number(p.quantity || 1);
+        const name = String(p.name || 'Piatto');
+        console.log(`[poll] job PASS tav=${tav} ${qty}x ${name}`);
+        try {
+          await sendPassTicket({ table_number: tav, name, quantity: qty });
+          console.log(`  ✓ stampato su ${PASS_IP}:${PASS_PORT}`);
+        } catch (e) {
+          console.error(`  ✗ pass: ${e.message}`);
+        }
+        continue;
+      }
       // JP 2026-06-04: job fiscale (Custom Q3X-F). Payload completo nel
       // job stesso, agent costruisce il protocollo Custom Q3X.
       if (job.kind === 'fiscal') {
@@ -328,6 +350,7 @@ console.log(`[poll] cloud=${CLOUD_BASE} tenant=${TENANT_SLUG} every ${POLL_SECON
 console.log(`[fiscal] ${FISCAL_IP ? FISCAL_IP + ':' + FISCAL_PORT : 'NON CONFIGURATA'}`);
 console.log(`[kitchen] ${KITCHEN_IP}:${KITCHEN_PORT} (ESC/POS + XML fallback)`);
 console.log(`[bar] ${BAR_IP}:${BAR_PORT} (ESC/POS)`);
+console.log(`[pass] ${PASS_IP}:${PASS_PORT} (ESC/POS) — ticket piatti ready`);
 setInterval(pollOnce, POLL_SECONDS * 1000);
 pollOnce();
 
@@ -530,6 +553,58 @@ function sendBarRaw(buf) {
 
 async function sendBarTicket(payload) {
   await sendBarRaw(buildBarTicketEscPos(payload));
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// PASS ticket — JP 2026-06-08.
+// Stampante .102 (Epson TM-m30II). Quando un piatto diventa 'ready' in
+// cucina, esce 1 foglio col TAV X gigante + nome piatto + qty. Cameriere
+// lo prende dal gancio + abbina al piatto fisico al pass.
+// Layout (80mm): TAV X gigante centrato, nome piatto bold altezza x2,
+// quantita' (se >1) in oro.
+// ──────────────────────────────────────────────────────────────────────
+function buildPassTicketEscPos(payload) {
+  const tav = String(payload.table_number || '?');
+  const qty = Number(payload.quantity || 1);
+  const name = String(payload.name || 'Piatto');
+  const parts = [];
+  const w = arr => parts.push(Buffer.from(arr));
+  const t = s => parts.push(Buffer.from(String(s) + '\n', 'latin1'));
+  w([ESC, 0x40]);                          // init
+  w([ESC, 0x61, 0x01]);                    // align center
+  // TAV X gigante (size 4x4 + bold)
+  w([ESC, 0x45, 0x01]);                    // bold on
+  w([GS, 0x21, 0x33]);                     // size 4x4
+  t(`TAV ${tav}`);
+  w([GS, 0x21, 0x00]);                     // size normal
+  w([ESC, 0x45, 0x00]);                    // bold off
+  t('');
+  t('-'.repeat(WIDTH));
+  // Nome piatto + qty
+  w([GS, 0x21, 0x11]);                     // size 2x2
+  w([ESC, 0x45, 0x01]);                    // bold on
+  t(qty > 1 ? `${qty}x ${name}` : name);
+  w([ESC, 0x45, 0x00]);
+  w([GS, 0x21, 0x00]);
+  t('');
+  w([ESC, 0x64, 0x03]);                    // feed 3
+  w([GS, 0x56, 0x01]);                     // partial cut
+  return Buffer.concat(parts);
+}
+
+function sendPassRaw(buf) {
+  return new Promise((resolve, reject) => {
+    const sock = net.createConnection(PASS_PORT, PASS_IP);
+    sock.setTimeout(5000);
+    sock.on('connect', () => sock.write(buf, () => sock.end()));
+    sock.on('error', reject);
+    sock.on('timeout', () => { sock.destroy(); reject(new Error('timeout pass')); });
+    sock.on('close', () => resolve());
+  });
+}
+
+async function sendPassTicket(payload) {
+  await sendPassRaw(buildPassTicketEscPos(payload));
 }
 
 function sendToFiscalPrinter(payload) {
