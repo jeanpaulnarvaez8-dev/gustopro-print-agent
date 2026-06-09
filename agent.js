@@ -66,6 +66,11 @@ const BAR_PORT      = parseInt(process.env.BAR_PRINTER_PORT || '9100', 10);
 const PASS_IP       = process.env.PASS_PRINTER_IP      || '192.168.1.102';
 const PASS_PORT     = parseInt(process.env.PASS_PRINTER_PORT || '9100', 10);
 
+// JP 2026-06-09: stampante PIZZA-PASS (.25). Pizze e panini quando sono
+// 'ready' al pizzaiolo escono qui (1 foglio per voce con TAV + nome).
+const PIZZA_PASS_IP   = process.env.PIZZA_PASS_PRINTER_IP   || '192.168.1.25';
+const PIZZA_PASS_PORT = parseInt(process.env.PIZZA_PASS_PRINTER_PORT || '9100', 10);
+
 const ESC = 0x1B, GS = 0x1D;
 const WIDTH = 32; // colonne stampabili (sicuro sia a 58 sia a 80mm)
 
@@ -279,17 +284,23 @@ async function pollOnce() {
       }
       // JP 2026-06-08: ticket PASS — un foglio per piatto ready.
       // Payload: { table_number, name, quantity }. Stampante .102.
+      // JP 2026-06-09: routing su job.target ('pass' | 'pizza-pass'):
+      // pizze/panini vanno alla .25, resto alla .102.
       if (job.kind === 'pass-ticket') {
         const p = job.payload || {};
         const tav = String(p.table_number || '?');
         const qty = Number(p.quantity || 1);
         const name = String(p.name || 'Piatto');
-        console.log(`[poll] job PASS tav=${tav} ${qty}x ${name}`);
+        const isPizza = job.target === 'pizza-pass';
+        const targetIp = isPizza ? PIZZA_PASS_IP : PASS_IP;
+        const targetPort = isPizza ? PIZZA_PASS_PORT : PASS_PORT;
+        const targetLabel = isPizza ? 'PIZZA-PASS' : 'PASS';
+        console.log(`[poll] job ${targetLabel} tav=${tav} ${qty}x ${name}`);
         try {
-          await sendPassTicket({ table_number: tav, name, quantity: qty });
-          console.log(`  ✓ stampato su ${PASS_IP}:${PASS_PORT}`);
+          await sendPassRawTo({ table_number: tav, name, quantity: qty }, targetIp, targetPort);
+          console.log(`  ✓ stampato su ${targetIp}:${targetPort}`);
         } catch (e) {
-          console.error(`  ✗ pass: ${e.message}`);
+          console.error(`  ✗ ${targetLabel.toLowerCase()}: ${e.message}`);
         }
         continue;
       }
@@ -351,6 +362,7 @@ console.log(`[fiscal] ${FISCAL_IP ? FISCAL_IP + ':' + FISCAL_PORT : 'NON CONFIGU
 console.log(`[kitchen] ${KITCHEN_IP}:${KITCHEN_PORT} (ESC/POS + XML fallback)`);
 console.log(`[bar] ${BAR_IP}:${BAR_PORT} (ESC/POS)`);
 console.log(`[pass] ${PASS_IP}:${PASS_PORT} (ESC/POS) — ticket piatti ready`);
+console.log(`[pizza-pass] ${PIZZA_PASS_IP}:${PIZZA_PASS_PORT} (ESC/POS) — ticket pizze/panini ready`);
 setInterval(pollOnce, POLL_SECONDS * 1000);
 pollOnce();
 
@@ -592,19 +604,24 @@ function buildPassTicketEscPos(payload) {
   return Buffer.concat(parts);
 }
 
-function sendPassRaw(buf) {
+function sendPassRaw(buf, ip = PASS_IP, port = PASS_PORT) {
   return new Promise((resolve, reject) => {
-    const sock = net.createConnection(PASS_PORT, PASS_IP);
+    const sock = net.createConnection(port, ip);
     sock.setTimeout(5000);
     sock.on('connect', () => sock.write(buf, () => sock.end()));
     sock.on('error', reject);
-    sock.on('timeout', () => { sock.destroy(); reject(new Error('timeout pass')); });
+    sock.on('timeout', () => { sock.destroy(); reject(new Error('timeout pass ' + ip)); });
     sock.on('close', () => resolve());
   });
 }
 
 async function sendPassTicket(payload) {
   await sendPassRaw(buildPassTicketEscPos(payload));
+}
+
+// JP 2026-06-09: invia ticket pass a IP/porta arbitrari (per pizza-pass .25).
+async function sendPassRawTo(payload, ip, port) {
+  await sendPassRaw(buildPassTicketEscPos(payload), ip, port);
 }
 
 function sendToFiscalPrinter(payload) {
