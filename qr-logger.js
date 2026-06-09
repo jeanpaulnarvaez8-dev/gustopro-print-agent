@@ -187,6 +187,35 @@ code{background:#f1f3f5;padding:2px 6px;border-radius:4px}
 </div></body></html>`);
   }
 
+  // /export — snapshot JSONL completo del log corrente (per backup off-site)
+  // Usato dal Mac di JP (mac-backup.sh) per copia di sicurezza titolare/GDPR.
+  if (pathname === '/export') {
+    if (params.get('key') !== ADMIN_KEY) {
+      res.writeHead(401, { 'Content-Type': 'text/plain' });
+      return res.end('forbidden');
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    if (fs.existsSync(LOG_FILE)) {
+      return fs.createReadStream(LOG_FILE).pipe(res);
+    }
+    return res.end();
+  }
+
+  // /export/archive — lista archive ruotati disponibili (per backup completo)
+  if (pathname === '/export/archive') {
+    if (params.get('key') !== ADMIN_KEY) {
+      res.writeHead(401); return res.end('forbidden');
+    }
+    const files = fs.readdirSync(LOG_DIR)
+      .filter(f => /^qr-scans\.\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
+      .sort();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ archives: files }));
+  }
+
   // /health — per checks
   if (pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
