@@ -13,10 +13,16 @@
 set -euo pipefail
 
 REPO_BASE="https://raw.githubusercontent.com/jeanpaulnarvaez8-dev/gustopro-print-agent/main"
-INSTALL_DIR="$HOME/Library/Application Support/GustoProQrBackup"
+INSTALL_DIR="$HOME/.gustopro-qr-backup"          # niente spazi → niente bug curl
 PLIST="$HOME/Library/LaunchAgents/it.gustopro.qr-backup.plist"
 CONFIG="$HOME/.gustopro-qr-backup.env"
 BACKUP_DIR="$HOME/RivaBeach-QR-Backup"
+
+# Se stdin e' una pipe (curl|bash) i `read -p` saltano i prompt.
+# Forza la lettura dal terminale reale.
+if [ ! -t 0 ] && [ -r /dev/tty ]; then
+  exec </dev/tty
+fi
 
 echo "==> GustoPro QR Backup — Setup Mac"
 echo ""
