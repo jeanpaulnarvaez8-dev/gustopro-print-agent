@@ -433,13 +433,16 @@ function buildCustomQ3XPayload(p) {
 // Compat legacy: se arriva singolo item_name/quantity (versioni vecchie del
 // backend), lo normalizziamo a items[]. Cosi' niente rotture durante rollout.
 function normalizeKitchenPayload(p) {
-  if (Array.isArray(p?.items) && p.items.length > 0) return p;
-  if (p?.item_name) return { table_number: p.table_number, items: [{ name: p.item_name, quantity: p.quantity || 1 }] };
-  return { table_number: p?.table_number || '?', items: [] };
+  // JP 2026-06-11: preservo customer_name + is_takeaway per il titolo
+  // della comanda asporto (nome cliente invece di "TAV ASPORTO").
+  const extra = { customer_name: p?.customer_name || null, is_takeaway: !!p?.is_takeaway };
+  if (Array.isArray(p?.items) && p.items.length > 0) return { ...p, ...extra };
+  if (p?.item_name) return { table_number: p.table_number, ...extra, items: [{ name: p.item_name, quantity: p.quantity || 1 }] };
+  return { table_number: p?.table_number || '?', ...extra, items: [] };
 }
 
 function buildKitchenTicketEscPos(payload) {
-  const { table_number, items } = normalizeKitchenPayload(payload);
+  const { table_number, items, customer_name, is_takeaway } = normalizeKitchenPayload(payload);
   const ESC = 0x1B, GS = 0x1D;
   const parts = [];
   const w = (b) => parts.push(Buffer.from(b));
@@ -447,12 +450,26 @@ function buildKitchenTicketEscPos(payload) {
   // Init + align center
   w([ESC, 0x40]);
   w([ESC, 0x61, 1]);
-  // TAVOLO X gigante (height x2 + width x2 + bold)
-  w([GS, 0x21, 0x33]);
-  w([ESC, 0x45, 1]);
-  t(`TAV ${table_number}`);
-  w([ESC, 0x45, 0]);
-  w([GS, 0x21, 0x00]);
+  // JP 2026-06-11: ASPORTO → titolo = NOME CLIENTE (non "TAV ASPORTO"),
+  // cosi' con piu' asporti insieme si capisce di chi e' la comanda.
+  const takeaway = is_takeaway || String(table_number).toUpperCase() === 'ASPORTO';
+  if (takeaway && customer_name) {
+    // "ASPORTO" medio sopra + NOME CLIENTE gigante sotto
+    w([GS, 0x21, 0x11]);                 // 2x2
+    w([ESC, 0x45, 1]);
+    t('* ASPORTO *');
+    w([GS, 0x21, 0x33]);                 // 4x4 gigante
+    t(String(customer_name).toUpperCase());
+    w([ESC, 0x45, 0]);
+    w([GS, 0x21, 0x00]);
+  } else {
+    // TAVOLO X gigante (height x2 + width x2 + bold)
+    w([GS, 0x21, 0x33]);
+    w([ESC, 0x45, 1]);
+    t(`TAV ${table_number}`);
+    w([ESC, 0x45, 0]);
+    w([GS, 0x21, 0x00]);
+  }
   t('================');
   // Items: align left, ogni riga "qty x nome" in altezza doppia + bold
   w([ESC, 0x61, 0]);
@@ -475,12 +492,16 @@ function buildKitchenTicketEscPos(payload) {
 }
 
 function buildKitchenTicketCustomXML(payload) {
-  const { table_number, items } = normalizeKitchenPayload(payload);
+  const { table_number, items, customer_name, is_takeaway } = normalizeKitchenPayload(payload);
+  const takeaway = is_takeaway || String(table_number).toUpperCase() === 'ASPORTO';
+  const header = (takeaway && customer_name)
+    ? `ASPORTO - ${String(customer_name).toUpperCase()}`
+    : `TAVOLO ${String(table_number)}`;
   const lines = [];
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
   lines.push('<printerNonFiscal>');
   lines.push('  <beginNonFiscalReceipt />');
-  lines.push(`  <printNormal operator="1" font="2" data="TAVOLO ${escXml(String(table_number))}" />`);
+  lines.push(`  <printNormal operator="1" font="2" data="${escXml(header)}" />`);
   for (const it of items) {
     lines.push(`  <printNormal operator="1" font="1" data="${escXml(String(it.quantity))}x ${escXml(it.name)}" />`);
   }
