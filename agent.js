@@ -477,6 +477,13 @@ function buildKitchenTicketEscPos(payload) {
   w([ESC, 0x45, 1]);
   for (const it of items) {
     t(`${it.quantity}x ${it.name}`);
+    // JP 2026-06-13: nota cliente sotto il piatto (es. "senza crudo"),
+    // size normale + bold cosi' la cucina la legge bene.
+    if (it.notes) {
+      w([GS, 0x21, 0x00]);               // size normale
+      t(`   >> ${String(it.notes).toUpperCase()}`);
+      w([GS, 0x21, 0x01]);               // torna 1x2 per il piatto dopo
+    }
   }
   w([ESC, 0x45, 0]);
   w([GS, 0x21, 0x00]);
